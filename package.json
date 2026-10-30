@@ -4,8 +4,9 @@
   "description": "Online course management system developed with Node.js, TypeScript, Express.js and PostgreSQL.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "dev": "tsx watch src/server.ts",
+  "start": "tsx src/server.ts"
+},
   "repository": {
     "type": "git",
     "url": "git+https://github.com/LeoMichaki30/course-management-system.git"
