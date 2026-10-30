@@ -4,9 +4,11 @@
   "description": "Online course management system developed with Node.js, TypeScript, Express.js and PostgreSQL.",
   "main": "index.js",
   "scripts": {
-  "dev": "tsx watch src/server.ts",
-  "start": "tsx src/server.ts"
-},
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.scripts.json --noEmit",
+    "test:db": "node --import tsx scripts/test-supabase.ts"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/LeoMichaki30/course-management-system.git"
@@ -20,6 +22,8 @@
   },
   "homepage": "https://github.com/LeoMichaki30/course-management-system#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "dotenv": "^18.0.9",
     "express": "^5.3.0"
   },
   "devDependencies": {
