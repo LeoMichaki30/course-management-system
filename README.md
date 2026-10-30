@@ -4,17 +4,17 @@ Online course management system developed with Node.js, TypeScript, Express.js a
 
 ## Current scope
 
-The first database stage includes the schema migration, development seed, SQL reports, and a server-only Supabase client. CRUD endpoints and authentication are not implemented. The existing root endpoint remains available independently of database configuration.
+The project includes the schema migration, development seed, SQL reports, a server-only Supabase client, and user CRUD endpoints. Authentication and CRUD endpoints for other entities are not implemented. The root endpoint retains its original response. Starting the API now requires the Supabase environment configuration because the user routes load the shared client.
 
 ## Structure
 
 ```text
 src/
   config/supabase.ts  # Server-only Supabase client
-  models/            # Domain types for the next implementation stage
-  repositories/      # Database queries for the next implementation stage
-  controllers/       # Request handling for the next implementation stage
-  routes/            # API endpoints for the next implementation stage
+  models/            # User types and write inputs
+  repositories/      # Supabase user queries
+  controllers/       # Input validation, responses, and error handling
+  routes/            # User endpoint definitions
   app.ts
   server.ts
 supabase/
@@ -42,7 +42,7 @@ Foreign keys restrict deletion of users who created courses or modules, courses 
 
 `created_at` and `updated_at` default to the insertion time. Triggers refresh `updated_at` on every update. `watched_at` defaults to the insertion time, but a caller can supply the actual viewing time. The intended rule is to record the first viewing: a repeated user/content pair is rejected rather than replacing its timestamp. No automatic replay handler is implemented in this stage.
 
-PostgreSQL `BIGINT` exceeds JavaScript's safe integer range. Future repositories must define a lossless ID serialization strategy before supporting IDs above `Number.MAX_SAFE_INTEGER`; the client configuration does not solve numeric decoding by itself.
+PostgreSQL `BIGINT` exceeds JavaScript's safe integer range. User queries cast IDs to text in the database so API responses use string IDs without losing precision. Route parameters accept positive integers up to `9223372036854775807` without converting them to JavaScript numbers.
 
 ## Supabase configuration
 
@@ -59,7 +59,7 @@ The SQL Editor steps are a minimal setup without a local Docker stack. The migra
 
 The migration expects Supabase's built-in `anon`, `authenticated`, and `service_role` roles. It enables Row Level Security on all five tables, grants no public policies, revokes table and sequence access from public client roles, and grants server operations to `service_role`. The server secret bypasses RLS and must remain private. This configures database access without implementing application authentication.
 
-The client in `src/config/supabase.ts` reads environment variables and disables session persistence and refresh. It does not send a request merely by being imported and is not yet used by the API routes.
+The client in `src/config/supabase.ts` reads environment variables and disables session persistence and refresh. It does not send a request merely by being imported. User repositories reuse this client.
 
 References: [Supabase client initialization](https://supabase.com/docs/reference/javascript/initializing), [server-only API keys](https://supabase.com/docs/guides/getting-started/api-keys), and [development seeds](https://supabase.com/docs/guides/local-development/seeding-your-database).
 
@@ -85,14 +85,32 @@ Explicit IDs make the reports reproducible, including the query for content ID `
 4. All contents with the course title: fourteen rows, ordered by content ID.
 5. Users who watched content ID `2`: Alice, Benjamin, and Chloe, with their `watched_at` timestamps.
 
+## User API
+
+| Method | Endpoint | Success | Behavior |
+| --- | --- | --- | --- |
+| GET | `/users` | 200 | List users ordered by ID |
+| GET | `/users/:id` | 200 | Return one user; 404 if missing |
+| POST | `/users` | 201 | Create a user and return a Location header |
+| PUT | `/users/:id` | 200 | Replace editable fields; 404 if missing |
+| DELETE | `/users/:id` | 204 | Delete a user without a response body; 404 if missing |
+
+POST requires `name` and `email`; `status` defaults to `active`. PUT requires all three fields: `name`, `email`, and `status`. Names and emails are trimmed, and emails are converted to lowercase. Status accepts only `active` or `inactive`. Unknown fields, including `id`, `created_at`, and `updated_at`, are rejected. The database generates IDs and timestamps.
+
+Invalid inputs return 400. Duplicate emails return 409. Deleting a user linked to courses or modules returns 409, enforced by the existing foreign keys. Successful deletion also removes the user's viewing records through the existing cascade. Unexpected failures return 500 without internal database details or credentials. These endpoints do not implement authentication.
+
 ## Verification
 
 ```sh
 npm run typecheck
+node --import tsx --test tests/userRoutes.test.cjs
+npm run test:db
 npm run dev
 ```
 
 The server listens on `http://localhost:3001`. The root endpoint tests Express availability only; it does not test the database.
+
+The user route tests intercept every Supabase request with simulated responses and placeholder credentials. They cover success, validation, missing users, duplicate emails, deletion conflicts, and unexpected failures without accessing a real database. `npm run test:db` performs a real read-only count of users. Tests that create, update, or delete real Supabase records require separate authorization.
 
 To check a real Supabase connection after configuring a development project, run this read-only query from the repository root:
 
