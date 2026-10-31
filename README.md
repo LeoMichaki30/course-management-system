@@ -2,7 +2,7 @@
 
 Sistema de gerenciamento de cursos on-line desenvolvido como projeto acadêmico, com backend em Node.js, TypeScript e Express e banco de dados PostgreSQL por meio do Supabase.
 
-O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários, cursos, módulos e conteúdos. A estrutura do banco também contempla visualizações, cujos endpoints ainda não foram implementados.
+O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários, cursos, módulos e conteúdos. Também permite registrar a primeira visualização de cada conteúdo por usuário e consultar visualizações por usuário ou conteúdo.
 
 ## Objetivo
 
@@ -34,21 +34,25 @@ course-management-system/
 │   │   ├── contentController.ts
 │   │   ├── courseController.ts
 │   │   ├── moduleController.ts
+│   │   ├── userContentViewController.ts
 │   │   └── userController.ts
 │   ├── models/
 │   │   ├── contentModel.ts
 │   │   ├── courseModel.ts
 │   │   ├── moduleModel.ts
+│   │   ├── userContentViewModel.ts
 │   │   └── userModel.ts
 │   ├── repositories/
 │   │   ├── contentRepository.ts
 │   │   ├── courseRepository.ts
 │   │   ├── moduleRepository.ts
+│   │   ├── userContentViewRepository.ts
 │   │   └── userRepository.ts
 │   ├── routes/
 │   │   ├── contentRoutes.ts
 │   │   ├── courseRoutes.ts
 │   │   ├── moduleRoutes.ts
+│   │   ├── userContentViewRoutes.ts
 │   │   └── userRoutes.ts
 │   ├── app.ts
 │   └── server.ts
@@ -62,6 +66,7 @@ course-management-system/
 │   ├── contentRoutes.test.cjs
 │   ├── courseRoutes.test.cjs
 │   ├── moduleRoutes.test.cjs
+│   ├── userContentViewRoutes.test.cjs
 │   └── userRoutes.test.cjs
 ├── scripts/
 │   ├── test-supabase.ts
@@ -109,7 +114,7 @@ O esquema PostgreSQL está definido em [supabase/migrations/20261030000000_creat
 - Nomes, títulos, códigos, e-mails e textos de conteúdo não podem ser vazios. As descrições são opcionais.
 - As chaves estrangeiras impedem excluir usuários com cursos ou módulos, cursos com módulos e módulos com conteúdos (`ON DELETE RESTRICT`).
 - A exclusão de um usuário ou conteúdo remove suas visualizações (`ON DELETE CASCADE`), desde que nenhuma outra restrição impeça a exclusão.
-- A combinação `user_id` e `content_id` é única em `user_content_views`. O objetivo é registrar a primeira visualização; uma nova inserção do mesmo par é rejeitada. Ainda não existe um endpoint para tratar visualizações repetidas.
+- A combinação `user_id` e `content_id` é única em `user_content_views`. O objetivo é registrar a primeira visualização; uma nova inserção do mesmo par é rejeitada. O endpoint de registro retorna `409` em tentativas repetidas, preservando o timestamp original.
 - Os timestamps usam `TIMESTAMPTZ`. `created_at`, `updated_at` e `watched_at` recebem a data de inserção por padrão. Triggers atualizam `updated_at` a cada alteração. É possível informar explicitamente `watched_at`.
 - Há índices nas chaves estrangeiras; a restrição de unicidade das visualizações já indexa o par começando por `user_id`.
 
@@ -244,6 +249,9 @@ URL base local: `http://localhost:3001`.
 | POST | `/contents` | `201` | Cria um conteúdo e retorna o cabeçalho `Location` |
 | PUT | `/contents/:id` | `200` | Substitui todos os campos editáveis de um conteúdo |
 | DELETE | `/contents/:id` | `204` | Exclui o conteúdo e suas visualizações por cascata do banco, sem corpo na resposta |
+| POST | `/content-views` | `201` | Registra a primeira visualização de um conteúdo por usuário |
+| GET | `/content-views/users/:userId` | `200` | Lista as visualizações do usuário |
+| GET | `/content-views/contents/:contentId` | `200` | Lista as visualizações do conteúdo |
 
 ### Dados e validações de usuários
 
@@ -371,6 +379,50 @@ A chave estrangeira garante que `module_id` referencie um módulo existente. O e
 
 A migration define `user_content_views.content_id` com `ON DELETE CASCADE`: excluir um conteúdo também remove suas visualizações. A API faz somente a exclusão em `contents`, sem consultas ou exclusões manuais em `user_content_views`, e retorna `204` sem corpo. Visualizações existentes não impedem a exclusão. Isso é diferente da exclusão de um módulo com conteúdos, que continua bloqueada por `ON DELETE RESTRICT`.
 
+### Registro e consulta de visualizações
+
+Para registrar uma visualização, envie os dois IDs como strings:
+
+```json
+{
+  "user_id": "1",
+  "content_id": "2"
+}
+```
+
+O PostgreSQL preenche `watched_at` com `now()` quando o campo é omitido. Para informar o momento da visualização, inclua um timestamp com fuso explícito:
+
+```json
+{
+  "user_id": "1",
+  "content_id": "2",
+  "watched_at": "2026-10-01T10:00:00.123456-03:00"
+}
+```
+
+O POST retorna `201` com `user_id`, `content_id` e `watched_at`. A tabela não possui um campo `id` próprio. Os dois IDs são retornados como strings para preservar a precisão do BIGINT.
+
+- `user_id`, `content_id`, `:userId` e `:contentId` devem representar inteiros positivos, sem zeros à esquerda, até `9223372036854775807`. No JSON, apenas strings são aceitas.
+- `watched_at` é opcional. Quando informado, deve ser uma string no formato `YYYY-MM-DDTHH:mm:ss[.fração]Z` ou com deslocamento `±HH:mm`, com calendário e horário válidos. Não são aceitos `null`, datas sem fuso ou datas impossíveis. A API não converte o valor antes de enviá-lo ao banco.
+- Não há restrição adicional sobre datas futuras ou status do usuário.
+- Somente `user_id`, `content_id` e `watched_at` são aceitos no corpo do POST.
+- A constraint única `(user_id, content_id)` rejeita uma segunda inserção com `409`, mesmo que outro timestamp seja enviado. O timestamp original é preservado; não há `upsert`, atualização automática ou contagem de repetições.
+- As chaves estrangeiras garantem a existência de usuário e conteúdo no registro. Referências inexistentes retornam `409`.
+
+As consultas verificam primeiro a existência do usuário ou conteúdo: retornam `404` para uma entidade inexistente e `200` com `[]` para uma entidade existente sem visualizações. A consulta por usuário ordena por `content_id`; a consulta por conteúdo ordena por `user_id`. Ambas buscam páginas adicionais internamente, sem parâmetros públicos de paginação.
+
+| Código HTTP | Situação em visualizações |
+| --- | --- |
+| `201` | Visualização registrada |
+| `200` | Consulta concluída, inclusive lista vazia |
+| `400` | Corpo, IDs ou timestamp inválidos; violações de dados |
+| `404` | Usuário ou conteúdo da consulta inexistente |
+| `409` | Par já registrado (`23505`) ou referência inexistente no POST (`23503`) |
+| `413` | Corpo da requisição excessivamente grande |
+| `500` | Falha inesperada de banco ou rede, sem detalhes internos |
+
+Duplicidades retornam `This user has already viewed this content.`. Referências inexistentes no POST retornam `The specified user or content does not exist.`. Não existem endpoints para editar ou excluir visualizações. A remoção decorrente da exclusão de usuários ou conteúdos continua a cargo do `ON DELETE CASCADE` existente.
+
 Os endpoints atuais não possuem autenticação ou autorização de usuários.
 
 ## Verificação e testes
@@ -386,10 +438,10 @@ Verifica os tipos da aplicação e dos scripts sem gerar arquivos compilados.
 ### Testes automatizados das rotas
 
 ```sh
-node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs tests/moduleRoutes.test.cjs tests/contentRoutes.test.cjs
+node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs tests/moduleRoutes.test.cjs tests/contentRoutes.test.cjs tests/userContentViewRoutes.test.cjs
 ```
 
-Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários, cursos, módulos e conteúdos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Os testes de módulos cobrem separadamente referências a cursos e usuários inexistentes em POST e PUT, além da exclusão bloqueada por conteúdos no DELETE. Também verificam os três IDs BIGINT, os campos obrigatórios, a descrição e a aceitação de títulos repetidos. Os testes de conteúdos verificam a preservação exata do texto formatado em POST e PUT, as referências a módulos inexistentes em cada operação e a exclusão sem manipulação manual de visualizações. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica. A remoção efetiva das visualizações por cascata também depende de verificação real autorizada; o teste simulado confirma apenas que a API delega a exclusão ao banco.
+Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários, cursos, módulos e conteúdos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Os testes de módulos cobrem separadamente referências a cursos e usuários inexistentes em POST e PUT, além da exclusão bloqueada por conteúdos no DELETE. Também verificam os três IDs BIGINT, os campos obrigatórios, a descrição e a aceitação de títulos repetidos. Os testes de conteúdos verificam a preservação exata do texto formatado em POST e PUT, as referências a módulos inexistentes em cada operação e a exclusão sem manipulação manual de visualizações. O conjunto de visualizações verifica registro com timestamp explícito ou gerado pelo banco, duplicidade sem atualização, conflitos de referências, consultas por usuário e conteúdo, ausência de registros, paginação, IDs grandes e timestamps inválidos. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica. A remoção efetiva das visualizações por cascata também depende de verificação real autorizada; o teste simulado confirma apenas que a API delega a exclusão ao banco.
 
 Não existe um script `npm test` definido no `package.json`; utilize o comando acima.
 
@@ -418,11 +470,11 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 - [x] Migration com as cinco tabelas, relacionamentos, restrições, índices, triggers e RLS.
 - [x] Script de população com dados de exemplo.
 - [x] Cinco relatórios SQL do projeto acadêmico.
+- [x] Registro e consulta de visualizações por usuário ou conteúdo, com rejeição de duplicidades e testes simulados.
 
 ### Pendentes
 
-- [ ] Endpoints para registrar e consultar visualizações de conteúdos.
-- [ ] Testes automatizados das próximas funcionalidades.
+- [ ] Testes reais de integração de escrita e de integridade no Supabase, mediante autorização.
 
 Autenticação, interface web, Swagger, Docker e implantação não estão implementados. A prioridade do projeto é concluir os requisitos funcionais do backend. A existência das tabelas, do seed e dos relatórios SQL não significa que as respectivas APIs estejam disponíveis ou que esses scripts já tenham sido executados em cada ambiente.
 

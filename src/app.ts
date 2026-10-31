@@ -4,6 +4,7 @@ import userRoutes from "./routes/userRoutes";
 import courseRoutes from "./routes/courseRoutes";
 import moduleRoutes from "./routes/moduleRoutes";
 import contentRoutes from "./routes/contentRoutes";
+import userContentViewRoutes from "./routes/userContentViewRoutes";
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use("/users", userRoutes);
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/contents", contentRoutes);
+app.use("/content-views", userContentViewRoutes);
 
 const handleRequestError: ErrorRequestHandler = (error: unknown, req, res, next) => {
   if (res.headersSent) {
