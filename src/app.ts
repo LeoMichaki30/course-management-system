@@ -3,6 +3,7 @@ import type { ErrorRequestHandler } from "express";
 import userRoutes from "./routes/userRoutes";
 import courseRoutes from "./routes/courseRoutes";
 import moduleRoutes from "./routes/moduleRoutes";
+import contentRoutes from "./routes/contentRoutes";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.get("/", (req, res) => {
 app.use("/users", userRoutes);
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
+app.use("/contents", contentRoutes);
 
 const handleRequestError: ErrorRequestHandler = (error: unknown, req, res, next) => {
   if (res.headersSent) {

@@ -2,7 +2,7 @@
 
 Sistema de gerenciamento de cursos on-line desenvolvido como projeto acadêmico, com backend em Node.js, TypeScript e Express e banco de dados PostgreSQL por meio do Supabase.
 
-O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários, cursos e módulos. A estrutura do banco também contempla conteúdos e visualizações, cujos endpoints ainda não foram implementados.
+O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários, cursos, módulos e conteúdos. A estrutura do banco também contempla visualizações, cujos endpoints ainda não foram implementados.
 
 ## Objetivo
 
@@ -19,7 +19,7 @@ Construir uma API para organizar cursos e seus materiais, identificar os usuári
 | `@supabase/supabase-js` | Cliente utilizado pelo backend para consultar o Supabase |
 | `dotenv` | Carregamento das variáveis do arquivo `.env` |
 | `tsx` | Execução dos arquivos TypeScript e modo de desenvolvimento |
-| `node:test` e `node:assert/strict` | Testes automatizados das rotas de usuários, cursos e módulos |
+| `node:test` e `node:assert/strict` | Testes automatizados das rotas de usuários, cursos, módulos e conteúdos |
 
 ## Arquitetura e estrutura de pastas
 
@@ -31,18 +31,22 @@ course-management-system/
 │   ├── config/
 │   │   └── supabase.ts
 │   ├── controllers/
+│   │   ├── contentController.ts
 │   │   ├── courseController.ts
 │   │   ├── moduleController.ts
 │   │   └── userController.ts
 │   ├── models/
+│   │   ├── contentModel.ts
 │   │   ├── courseModel.ts
 │   │   ├── moduleModel.ts
 │   │   └── userModel.ts
 │   ├── repositories/
+│   │   ├── contentRepository.ts
 │   │   ├── courseRepository.ts
 │   │   ├── moduleRepository.ts
 │   │   └── userRepository.ts
 │   ├── routes/
+│   │   ├── contentRoutes.ts
 │   │   ├── courseRoutes.ts
 │   │   ├── moduleRoutes.ts
 │   │   └── userRoutes.ts
@@ -55,6 +59,7 @@ course-management-system/
 ├── sql/
 │   └── reports.sql
 ├── tests/
+│   ├── contentRoutes.test.cjs
 │   ├── courseRoutes.test.cjs
 │   ├── moduleRoutes.test.cjs
 │   └── userRoutes.test.cjs
@@ -110,7 +115,7 @@ O esquema PostgreSQL está definido em [supabase/migrations/20261030000000_creat
 
 A migration habilita Row Level Security (RLS) nas cinco tabelas, sem políticas públicas, revoga o acesso dos papéis públicos e concede operações ao `service_role`. O acesso é realizado pelo backend com uma chave privada que contorna a RLS. Essa configuração não implementa autenticação ou autorização dos usuários da API.
 
-Como o `BIGINT` pode ultrapassar a precisão segura do JavaScript, os CRUDs de usuários, cursos e módulos convertem os IDs para texto nas consultas e os retornam como strings no JSON. Em cursos, isso também se aplica ao campo `user_id`; em módulos, aos campos `course_id` e `user_id`.
+Como o `BIGINT` pode ultrapassar a precisão segura do JavaScript, os CRUDs de usuários, cursos, módulos e conteúdos convertem os IDs para texto nas consultas e os retornam como strings no JSON. Em cursos, isso também se aplica ao campo `user_id`; em módulos, aos campos `course_id` e `user_id`; em conteúdos, ao campo `module_id`.
 
 ### Dados de exemplo e relatórios
 
@@ -234,6 +239,11 @@ URL base local: `http://localhost:3001`.
 | POST | `/modules` | `201` | Cria um módulo e retorna o cabeçalho `Location` |
 | PUT | `/modules/:id` | `200` | Substitui todos os campos editáveis de um módulo |
 | DELETE | `/modules/:id` | `204` | Exclui um módulo sem conteúdos, sem corpo na resposta |
+| GET | `/contents` | `200` | Lista conteúdos ordenados por ID; retorna `[]` se não houver registros |
+| GET | `/contents/:id` | `200` | Busca um conteúdo pelo ID |
+| POST | `/contents` | `201` | Cria um conteúdo e retorna o cabeçalho `Location` |
+| PUT | `/contents/:id` | `200` | Substitui todos os campos editáveis de um conteúdo |
+| DELETE | `/contents/:id` | `204` | Exclui o conteúdo e suas visualizações por cascata do banco, sem corpo na resposta |
 
 ### Dados e validações de usuários
 
@@ -328,6 +338,39 @@ As chaves estrangeiras garantem os vínculos com cursos e usuários. No POST/PUT
 
 O POST retorna o módulo criado e `Location: /modules/:id`; o DELETE bem-sucedido retorna `204` sem corpo.
 
+### Dados e validações de conteúdos
+
+POST e PUT exigem os três campos editáveis: `module_id`, `title` e `content`:
+
+```json
+{
+  "module_id": "1",
+  "title": "Introduction",
+  "content": "  # Lesson\n\n  Formatted learning material.\n"
+}
+```
+
+- `module_id` deve ser uma string com um inteiro positivo, sem zeros à esquerda, até `9223372036854775807`. A mesma faixa vale para `:id`. Números JSON são rejeitados para preservar a precisão.
+- `title` deve ser uma string não vazia após `trim()` e tem os espaços externos removidos.
+- `content` deve ser uma string cujo `trim()` não seja vazio. **O texto original é preservado integralmente na gravação**, incluindo espaços nas extremidades, tabulações e quebras de linha.
+- A migration não define unicidade, formato específico ou limite de tamanho para título e texto; a API não acrescenta essas restrições. O limite global de tamanho do corpo JSON do Express continua valendo.
+- Campos desconhecidos, inclusive `description`, `id`, `created_at` e `updated_at`, são rejeitados. Os IDs e timestamps são gerados pelo banco.
+- O PUT substitui os três campos editáveis e permite alterar o módulo associado. Não há endpoint PATCH.
+- As respostas incluem `id`, `module_id`, `title`, `content`, `created_at` e `updated_at`, com ambos os IDs como strings.
+- A listagem busca páginas adicionais internamente, sem parâmetros públicos de paginação.
+
+| Código HTTP | Situação em conteúdos |
+| --- | --- |
+| `400` | ID, corpo ou campos inválidos; violações das restrições de dados |
+| `404` | Conteúdo não encontrado na busca, atualização ou exclusão |
+| `409` | Módulo referenciado inexistente no POST/PUT |
+| `413` | Corpo da requisição excessivamente grande |
+| `500` | Falha inesperada de banco ou rede, sem exposição de detalhes internos |
+
+A chave estrangeira garante que `module_id` referencie um módulo existente. O erro PostgreSQL `23503` no POST/PUT retorna `The specified module does not exist.`. O POST retorna o conteúdo criado e `Location: /contents/:id`.
+
+A migration define `user_content_views.content_id` com `ON DELETE CASCADE`: excluir um conteúdo também remove suas visualizações. A API faz somente a exclusão em `contents`, sem consultas ou exclusões manuais em `user_content_views`, e retorna `204` sem corpo. Visualizações existentes não impedem a exclusão. Isso é diferente da exclusão de um módulo com conteúdos, que continua bloqueada por `ON DELETE RESTRICT`.
+
 Os endpoints atuais não possuem autenticação ou autorização de usuários.
 
 ## Verificação e testes
@@ -343,10 +386,10 @@ Verifica os tipos da aplicação e dos scripts sem gerar arquivos compilados.
 ### Testes automatizados das rotas
 
 ```sh
-node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs tests/moduleRoutes.test.cjs
+node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs tests/moduleRoutes.test.cjs tests/contentRoutes.test.cjs
 ```
 
-Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários, cursos e módulos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Os testes de módulos cobrem separadamente referências a cursos e usuários inexistentes em POST e PUT, além da exclusão bloqueada por conteúdos no DELETE. Também verificam os três IDs BIGINT, os campos obrigatórios, a descrição e a aceitação de títulos repetidos. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica.
+Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários, cursos, módulos e conteúdos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Os testes de módulos cobrem separadamente referências a cursos e usuários inexistentes em POST e PUT, além da exclusão bloqueada por conteúdos no DELETE. Também verificam os três IDs BIGINT, os campos obrigatórios, a descrição e a aceitação de títulos repetidos. Os testes de conteúdos verificam a preservação exata do texto formatado em POST e PUT, as referências a módulos inexistentes em cada operação e a exclusão sem manipulação manual de visualizações. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica. A remoção efetiva das visualizações por cascata também depende de verificação real autorizada; o teste simulado confirma apenas que a API delega a exclusão ao banco.
 
 Não existe um script `npm test` definido no `package.json`; utilize o comando acima.
 
@@ -369,7 +412,8 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 - [x] CRUD de usuários com validações e tratamento de erros.
 - [x] CRUD de cursos com validações, identificação do criador e tratamento de conflitos.
 - [x] CRUD de módulos com vínculos a cursos e criadores e tratamento de exclusão bloqueada por conteúdos.
-- [x] Testes automatizados das rotas de usuários, cursos e módulos com respostas simuladas do Supabase.
+- [x] CRUD de conteúdos com preservação do texto formatado, vínculo a módulos e exclusão delegada à cascata do banco.
+- [x] Testes automatizados das rotas de usuários, cursos, módulos e conteúdos com respostas simuladas do Supabase.
 - [x] Script de verificação da conexão com o banco, somente de leitura.
 - [x] Migration com as cinco tabelas, relacionamentos, restrições, índices, triggers e RLS.
 - [x] Script de população com dados de exemplo.
@@ -377,7 +421,6 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 
 ### Pendentes
 
-- [ ] CRUD de conteúdos.
 - [ ] Endpoints para registrar e consultar visualizações de conteúdos.
 - [ ] Testes automatizados das próximas funcionalidades.
 
