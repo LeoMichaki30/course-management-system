@@ -2,7 +2,7 @@
 
 Sistema de gerenciamento de cursos on-line desenvolvido como projeto acadêmico, com backend em Node.js, TypeScript e Express e banco de dados PostgreSQL por meio do Supabase.
 
-O projeto está em desenvolvimento. Atualmente, a API disponibiliza o CRUD de usuários. A estrutura do banco já contempla cursos, módulos, conteúdos e visualizações, mas os endpoints dessas entidades ainda não foram implementados.
+O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários e cursos. A estrutura do banco também contempla módulos, conteúdos e visualizações, cujos endpoints ainda não foram implementados.
 
 ## Objetivo
 
@@ -31,12 +31,16 @@ course-management-system/
 │   ├── config/
 │   │   └── supabase.ts
 │   ├── controllers/
+│   │   ├── courseController.ts
 │   │   └── userController.ts
 │   ├── models/
+│   │   ├── courseModel.ts
 │   │   └── userModel.ts
 │   ├── repositories/
+│   │   ├── courseRepository.ts
 │   │   └── userRepository.ts
 │   ├── routes/
+│   │   ├── courseRoutes.ts
 │   │   └── userRoutes.ts
 │   ├── app.ts
 │   └── server.ts
@@ -47,6 +51,7 @@ course-management-system/
 ├── sql/
 │   └── reports.sql
 ├── tests/
+│   ├── courseRoutes.test.cjs
 │   └── userRoutes.test.cjs
 ├── scripts/
 │   ├── test-supabase.ts
@@ -100,7 +105,7 @@ O esquema PostgreSQL está definido em [supabase/migrations/20261030000000_creat
 
 A migration habilita Row Level Security (RLS) nas cinco tabelas, sem políticas públicas, revoga o acesso dos papéis públicos e concede operações ao `service_role`. O acesso é realizado pelo backend com uma chave privada que contorna a RLS. Essa configuração não implementa autenticação ou autorização dos usuários da API.
 
-Como o `BIGINT` pode ultrapassar a precisão segura do JavaScript, o CRUD de usuários converte os IDs para texto nas consultas e os retorna como strings no JSON.
+Como o `BIGINT` pode ultrapassar a precisão segura do JavaScript, os CRUDs de usuários e cursos convertem os IDs para texto nas consultas e os retornam como strings no JSON. Em cursos, isso também se aplica ao campo `user_id`.
 
 ### Dados de exemplo e relatórios
 
@@ -214,6 +219,11 @@ URL base local: `http://localhost:3001`.
 | POST | `/users` | `201` | Cria um usuário e retorna o cabeçalho `Location` |
 | PUT | `/users/:id` | `200` | Substitui todos os campos editáveis de um usuário |
 | DELETE | `/users/:id` | `204` | Exclui um usuário, sem corpo na resposta |
+| GET | `/courses` | `200` | Lista cursos ordenados por ID; retorna `[]` se não houver registros |
+| GET | `/courses/:id` | `200` | Busca um curso pelo ID |
+| POST | `/courses` | `201` | Cria um curso e retorna o cabeçalho `Location` |
+| PUT | `/courses/:id` | `200` | Substitui todos os campos editáveis de um curso |
+| DELETE | `/courses/:id` | `204` | Exclui um curso sem módulos, sem corpo na resposta |
 
 ### Dados e validações de usuários
 
@@ -241,6 +251,38 @@ O parâmetro `:id` deve ser um inteiro positivo, sem zeros à esquerda, até `92
 | `413` | Corpo da requisição excede o limite aceito pelo Express |
 | `500` | Falha inesperada, com mensagem genérica sem detalhes internos do banco |
 
+### Dados e validações de cursos
+
+Para criar um curso, envie `user_id` como string, `code` e `title`. A descrição é opcional no POST e, quando omitida, é armazenada como `null`:
+
+```json
+{
+  "user_id": "1",
+  "code": "COURSE-004",
+  "title": "Example Course",
+  "description": "Course description"
+}
+```
+
+No PUT, os quatro campos são obrigatórios, incluindo `description`, que pode receber `null` para remover o texto. A atualização permite alterar o criador do curso. Não há endpoint PATCH.
+
+- `user_id` deve ser uma string com um inteiro positivo, sem zeros à esquerda, até `9223372036854775807`; números JSON são rejeitados para preservar a precisão. A mesma faixa vale para `:id`.
+- `code` e `title` devem ser strings não vazias após a remoção dos espaços externos. A migration não define tamanho máximo nem formato específico; a API não acrescenta esses limites. O código mantém suas maiúsculas e minúsculas, conforme a unicidade do PostgreSQL.
+- `description` aceita string ou `null`. Strings têm espaços externos removidos e podem ficar vazias.
+- Campos desconhecidos, inclusive `id`, `created_at` e `updated_at`, são rejeitados. O banco gera os IDs e timestamps.
+- `id` e `user_id` são retornados como strings. A listagem busca páginas adicionais internamente, sem parâmetros públicos de paginação.
+- Não há restrição adicional baseada no status do criador; o vínculo é validado pela chave estrangeira existente.
+
+| Código HTTP | Situação em cursos |
+| --- | --- |
+| `400` | ID, corpo ou campos inválidos; violações das restrições de dados |
+| `404` | Curso não encontrado na busca, atualização ou exclusão |
+| `409` | Código duplicado; criador inexistente no POST/PUT; curso com módulos no DELETE |
+| `413` | Corpo da requisição excessivamente grande |
+| `500` | Falha inesperada de banco ou rede, sem exposição de detalhes internos |
+
+O erro PostgreSQL `23503` é tratado conforme a operação: criação e atualização retornam `The specified user does not exist.`, enquanto exclusão retorna `Cannot delete a course linked to modules.`. O POST retorna o curso criado e `Location: /courses/:id`; o DELETE bem-sucedido retorna `204` sem corpo. As constraints do banco garantem a unicidade e a integridade referencial.
+
 Os endpoints atuais não possuem autenticação ou autorização de usuários.
 
 ## Verificação e testes
@@ -256,10 +298,10 @@ Verifica os tipos da aplicação e dos scripts sem gerar arquivos compilados.
 ### Testes automatizados das rotas
 
 ```sh
-node --import tsx --test tests/userRoutes.test.cjs
+node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs
 ```
 
-Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, operações do CRUD, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede.
+Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários e cursos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica.
 
 Não existe um script `npm test` definido no `package.json`; utilize o comando acima.
 
@@ -280,7 +322,8 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 - [x] Backend Express com TypeScript em camadas.
 - [x] Cliente Supabase configurado por variáveis de ambiente.
 - [x] CRUD de usuários com validações e tratamento de erros.
-- [x] Testes automatizados das rotas de usuários com respostas simuladas do Supabase.
+- [x] CRUD de cursos com validações, identificação do criador e tratamento de conflitos.
+- [x] Testes automatizados das rotas de usuários e cursos com respostas simuladas do Supabase.
 - [x] Script de verificação da conexão com o banco, somente de leitura.
 - [x] Migration com as cinco tabelas, relacionamentos, restrições, índices, triggers e RLS.
 - [x] Script de população com dados de exemplo.
@@ -288,7 +331,6 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 
 ### Pendentes
 
-- [ ] CRUD de cursos — próxima etapa do desenvolvimento.
 - [ ] CRUD de módulos.
 - [ ] CRUD de conteúdos.
 - [ ] Endpoints para registrar e consultar visualizações de conteúdos.

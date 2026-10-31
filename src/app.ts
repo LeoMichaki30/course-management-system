@@ -1,6 +1,7 @@
 import express from "express";
 import type { ErrorRequestHandler } from "express";
 import userRoutes from "./routes/userRoutes";
+import courseRoutes from "./routes/courseRoutes";
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/users", userRoutes);
+app.use("/courses", courseRoutes);
 
 const handleRequestError: ErrorRequestHandler = (error: unknown, req, res, next) => {
   if (res.headersSent) {
