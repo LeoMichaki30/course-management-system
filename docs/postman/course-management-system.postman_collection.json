@@ -1,0 +1,2129 @@
+{
+  "info": {
+    "name": "Course Management System — Reproducible API Tests",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run all 24 requests in their saved order using a current Postman Collection Runner. The original 23 API operations plus one explicit duplicate-view check are included. This workflow performs real writes against the configured local backend, which may use a remote Supabase database. Use only an authorized development environment. It creates unique temporary records, stores ownership IDs in run-local variables only, and deletes only those captured records, children first. Never enter existing record IDs. Individual dependent requests are skipped without current-run ownership. Interrupted runs or unconfirmed creation responses may leave temporary records; there is no broad fallback cleanup. No credentials are required by the current API."
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string",
+      "description": "Local Express API URL. localhost or 127.0.0.1 with an explicit port. Do not enter Supabase URLs or credentials."
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Clear public placeholders before any guard can fail, preventing fallback to external IDs.",
+          "pm.variables.set(\"baseUrl\", \"\");",
+          "for (const name of [\"userId\", \"courseId\", \"moduleId\", \"contentId\"]) pm.variables.set(name, \"\");",
+          "// Ownership must never be imported from a persistent or external variable scope.",
+          "const externalScopes = [pm.collectionVariables, pm.environment, pm.globals, pm.iterationData];",
+          "if (externalScopes.some(scope => scope && scope.has(\"cmsRunState\"))) {",
+          "  pm.execution.skipRequest();",
+          "  throw new Error(\"Remove reserved cmsRunState from collection, environment, global and data variables. Ownership must be run-local.\");",
+          "}",
+          "// Resolve only the collection URL and shadow unrelated environment/data variables.",
+          "const configuredUrl = String(pm.collectionVariables.get(\"baseUrl\") || \"\").replace(/\\/+$/, \"\");",
+          "const localUrl = /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1):([1-9]\\d{0,4})$/.exec(configuredUrl);",
+          "if (!localUrl || Number(localUrl[1]) > 65535) {",
+          "  pm.execution.skipRequest();",
+          "  throw new Error(\"Set collection baseUrl to a local HTTP API URL with a valid port, such as http://localhost:3001.\");",
+          "}",
+          "pm.variables.set(\"baseUrl\", configuredUrl);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const expectedStatus = Number(pm.variables.get(\"expectedStatus\"));",
+          "pm.test(\"HTTP status matches the operation contract\", function () {",
+          "  pm.expect(pm.response.code).to.eql(expectedStatus);",
+          "});",
+          "if (expectedStatus === 204) {",
+          "  pm.test(\"DELETE has no response body\", function () {",
+          "    pm.expect(pm.response.text()).to.eql(\"\");",
+          "  });",
+          "} else {",
+          "  pm.test(\"Response uses JSON\", function () {",
+          "    pm.expect(String(pm.response.headers.get(\"Content-Type\") || \"\").split(\";\")[0]).to.eql(\"application/json\");",
+          "    pm.response.json();",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Create User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"201\");",
+              "",
+              "// Local variables live only for this request or Collection Runner execution.",
+              "const runId = pm.variables.replaceIn(\"{{$guid}}\").toLowerCase();",
+              "if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(runId)) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(\"Unable to create a unique run identifier.\");",
+              "}",
+              "const run = { runId, baseUrl: pm.variables.get(\"baseUrl\"), iteration: pm.info.iteration, created: {}, view: null };",
+              "pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "for (const name of [\"userId\", \"courseId\", \"moduleId\", \"contentId\", \"originalWatchedAt\", \"duplicateWatchedAt\"]) pm.variables.set(name, \"\");",
+              "pm.variables.set(\"runId\", runId);",
+              "pm.variables.set(\"runEmail\", `postman.${runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "",
+              "",
+              "let verified = false;",
+              "pm.test(\"Created user is a new current-run record with a string BIGINT ID\", function () {",
+              "  pm.expect(pm.response.code).to.eql(201);",
+              "  pm.expect(validId(payload.id)).to.eql(true);",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.created_at).to.eql(\"string\");",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "  pm.expect(pm.response.headers.get(\"Location\")).to.eql(`/users/${payload.id}`);",
+              "  verified = true;",
+              "});",
+              "if (verified) {",
+              "  run.created.user = { id: payload.id, runId: run.runId };",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"userId\", payload.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ]
+        },
+        "description": "Starts a fresh run and generates unique emails and course code. Use the complete Collection Runner sequence, not individual Send actions.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Postman User {{runId}}\",\n  \"email\": \"{{runEmail}}\",\n  \"status\": \"active\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Users",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"List contains the record created in this run\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  const record = payload.find(record => record.id === pm.variables.get(\"userId\"));",
+              "  pm.expect(Boolean(record)).to.eql(true);",
+              "  pm.expect(typeof record.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Get User by ID",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"Retrieved ID matches the current-run user\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"userId\"));",
+              "  pm.expect(typeof payload.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Update User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "pm.test(\"PUT replaces only editable fields on the current-run user\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"userId\"));",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Postman User Updated {{runId}}\",\n  \"email\": \"{{updatedEmail}}\",\n  \"status\": \"inactive\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Course",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"201\");",
+              "const requiredEntities = [\"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "",
+              "",
+              "let verified = false;",
+              "pm.test(\"Created course is a new current-run record with a string BIGINT ID\", function () {",
+              "  pm.expect(pm.response.code).to.eql(201);",
+              "  pm.expect(validId(payload.id)).to.eql(true);",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.created_at).to.eql(\"string\");",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "  pm.expect(pm.response.headers.get(\"Location\")).to.eql(`/courses/${payload.id}`);",
+              "  verified = true;",
+              "});",
+              "if (verified) {",
+              "  run.created.course = { id: payload.id, runId: run.runId };",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"courseId\", payload.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/courses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "courses"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"code\": \"{{runCourseCode}}\",\n  \"title\": \"Postman Course {{runId}}\",\n  \"description\": \"Temporary record owned by this collection run.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Courses",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"course\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"List contains the record created in this run\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  const record = payload.find(record => record.id === pm.variables.get(\"courseId\"));",
+              "  pm.expect(Boolean(record)).to.eql(true);",
+              "  pm.expect(typeof record.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/courses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "courses"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Course by ID",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"course\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"Retrieved ID matches the current-run course\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"courseId\"));",
+              "  pm.expect(typeof payload.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/courses/{{courseId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "courses",
+            "{{courseId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Course",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"course\", \"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "pm.test(\"PUT replaces only editable fields on the current-run course\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"courseId\"));",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/courses/{{courseId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "courses",
+            "{{courseId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"code\": \"{{runCourseCode}}\",\n  \"title\": \"Postman Course Updated {{runId}}\",\n  \"description\": null\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Module",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"201\");",
+              "const requiredEntities = [\"course\", \"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "",
+              "",
+              "let verified = false;",
+              "pm.test(\"Created module is a new current-run record with a string BIGINT ID\", function () {",
+              "  pm.expect(pm.response.code).to.eql(201);",
+              "  pm.expect(validId(payload.id)).to.eql(true);",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.created_at).to.eql(\"string\");",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "  pm.expect(pm.response.headers.get(\"Location\")).to.eql(`/modules/${payload.id}`);",
+              "  verified = true;",
+              "});",
+              "if (verified) {",
+              "  run.created.module = { id: payload.id, runId: run.runId };",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"moduleId\", payload.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/modules",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "modules"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_id\": \"{{courseId}}\",\n  \"user_id\": \"{{userId}}\",\n  \"title\": \"Postman Module {{runId}}\",\n  \"description\": \"Temporary record owned by this collection run.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Modules",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"module\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"List contains the record created in this run\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  const record = payload.find(record => record.id === pm.variables.get(\"moduleId\"));",
+              "  pm.expect(Boolean(record)).to.eql(true);",
+              "  pm.expect(typeof record.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/modules",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "modules"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Module by ID",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"module\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"Retrieved ID matches the current-run module\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"moduleId\"));",
+              "  pm.expect(typeof payload.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/modules/{{moduleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "modules",
+            "{{moduleId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Module",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"module\", \"course\", \"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "pm.test(\"PUT replaces only editable fields on the current-run module\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"moduleId\"));",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/modules/{{moduleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "modules",
+            "{{moduleId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_id\": \"{{courseId}}\",\n  \"user_id\": \"{{userId}}\",\n  \"title\": \"Postman Module Updated {{runId}}\",\n  \"description\": null\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Content",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"201\");",
+              "const requiredEntities = [\"module\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "",
+              "",
+              "let verified = false;",
+              "pm.test(\"Created content is a new current-run record with a string BIGINT ID\", function () {",
+              "  pm.expect(pm.response.code).to.eql(201);",
+              "  pm.expect(validId(payload.id)).to.eql(true);",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.created_at).to.eql(\"string\");",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "  pm.expect(pm.response.headers.get(\"Location\")).to.eql(`/contents/${payload.id}`);",
+              "  verified = true;",
+              "});",
+              "if (verified) {",
+              "  run.created.content = { id: payload.id, runId: run.runId };",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"contentId\", payload.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/contents",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "contents"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"module_id\": \"{{moduleId}}\",\n  \"title\": \"Postman Content {{runId}}\",\n  \"content\": \"  # Learning material\\n\\n  Run: {{runId}}\\n\\tKeep this indentation.\\n  \"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Contents",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"List contains the record created in this run\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  const record = payload.find(record => record.id === pm.variables.get(\"contentId\"));",
+              "  pm.expect(Boolean(record)).to.eql(true);",
+              "  pm.expect(typeof record.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/contents",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "contents"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Content by ID",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "pm.test(\"Retrieved ID matches the current-run content\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"contentId\"));",
+              "  pm.expect(typeof payload.id).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/contents/{{contentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "contents",
+            "{{contentId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Content",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"content\", \"module\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const expected = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "pm.test(\"PUT replaces only editable fields on the current-run content\", function () {",
+              "  pm.expect(payload.id).to.eql(pm.variables.get(\"contentId\"));",
+              "  for (const key of Object.keys(expected)) pm.expect(payload[key]).to.eql(expected[key]);",
+              "  pm.expect(typeof payload.updated_at).to.eql(\"string\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/contents/{{contentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "contents",
+            "{{contentId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"module_id\": \"{{moduleId}}\",\n  \"title\": \"Postman Content Updated {{runId}}\",\n  \"content\": \"  # Updated learning material\\n\\n  Run: {{runId}}\\n\\tPreserve spaces and line breaks.\\n  \"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Content View",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"201\");",
+              "const requiredEntities = [\"user\", \"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "let verified = false;",
+              "pm.test(\"First view references this run's records and has a valid timestamp\", function () {",
+              "  pm.expect(pm.response.code).to.eql(201);",
+              "  pm.expect(payload.user_id).to.eql(run.created.user.id);",
+              "  pm.expect(payload.content_id).to.eql(run.created.content.id);",
+              "  pm.expect(typeof payload.watched_at).to.eql(\"string\");",
+              "  pm.expect(Number.isFinite(Date.parse(payload.watched_at))).to.eql(true);",
+              "  verified = true;",
+              "});",
+              "if (verified) {",
+              "  run.view = { user_id: payload.user_id, content_id: payload.content_id, watched_at: payload.watched_at };",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"originalWatchedAt\", payload.watched_at);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/content-views",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "content-views"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"content_id\": \"{{contentId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Reject Duplicate Content View",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"409\");",
+              "const requiredEntities = [\"user\", \"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "",
+              "if (!run.view || run.view.user_id !== run.created.user.id || run.view.content_id !== run.created.content.id) {",
+              "  blockRequest(\"No successful first view was recorded in this run. The request was not sent.\");",
+              "}",
+              "pm.variables.set(\"originalWatchedAt\", run.view.watched_at);",
+              "pm.variables.set(\"duplicateWatchedAt\", new Date(Date.parse(run.view.watched_at) + 60000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Duplicate view returns the expected conflict\", function () {",
+              "  pm.expect(pm.response.json()).to.eql({ error: \"This user has already viewed this content.\" });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/content-views",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "content-views"
+          ]
+        },
+        "description": "Intentionally repeats the current-run pair with a different timestamp. HTTP 409 is expected; the following queries confirm that the first timestamp is unchanged.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"content_id\": \"{{contentId}}\",\n  \"watched_at\": \"{{duplicateWatchedAt}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Content Views by User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"user\", \"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "",
+              "if (!run.view || run.view.user_id !== run.created.user.id || run.view.content_id !== run.created.content.id) {",
+              "  blockRequest(\"No successful first view was recorded in this run. The request was not sent.\");",
+              "}",
+              "pm.variables.set(\"originalWatchedAt\", run.view.watched_at);",
+              "pm.variables.set(\"duplicateWatchedAt\", new Date(Date.parse(run.view.watched_at) + 60000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "pm.test(\"The query returns only this run's view with its original timestamp\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  pm.expect(payload.length).to.eql(1);",
+              "  pm.expect(payload[0]).to.eql(run.view);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/content-views/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "content-views",
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Content Views by Content",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"200\");",
+              "const requiredEntities = [\"user\", \"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "",
+              "if (!run.view || run.view.user_id !== run.created.user.id || run.view.content_id !== run.created.content.id) {",
+              "  blockRequest(\"No successful first view was recorded in this run. The request was not sent.\");",
+              "}",
+              "pm.variables.set(\"originalWatchedAt\", run.view.watched_at);",
+              "pm.variables.set(\"duplicateWatchedAt\", new Date(Date.parse(run.view.watched_at) + 60000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const payload = pm.response.json();",
+              "const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "pm.test(\"The query returns only this run's view with its original timestamp\", function () {",
+              "  pm.expect(Array.isArray(payload)).to.eql(true);",
+              "  pm.expect(payload.length).to.eql(1);",
+              "  pm.expect(payload[0]).to.eql(run.view);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/content-views/contents/{{contentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "content-views",
+            "contents",
+            "{{contentId}}"
+          ]
+        },
+        "description": "Run in the full collection sequence. Only IDs captured from this execution are used."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete Content",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"204\");",
+              "const requiredEntities = [\"content\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "const childEntities = [];",
+              "",
+              "if (childEntities.some(entity => run.created[entity])) {",
+              "  blockRequest(\"A current-run child record was not successfully deleted. Parent cleanup was not sent.\");",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 204) {",
+              "  const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "  delete run.created.content;",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"contentId\", \"\");",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/contents/{{contentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "contents",
+            "{{contentId}}"
+          ]
+        },
+        "description": "Cleanup only: the pre-request guard requires an ID captured from a verified 201 response in this same run. No ID from collection, environment or data files is accepted. Successful child cleanup is required before deleting parents."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete Module",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"204\");",
+              "const requiredEntities = [\"module\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "const childEntities = [\"content\"];",
+              "",
+              "if (childEntities.some(entity => run.created[entity])) {",
+              "  blockRequest(\"A current-run child record was not successfully deleted. Parent cleanup was not sent.\");",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 204) {",
+              "  const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "  delete run.created.module;",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"moduleId\", \"\");",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/modules/{{moduleId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "modules",
+            "{{moduleId}}"
+          ]
+        },
+        "description": "Cleanup only: the pre-request guard requires an ID captured from a verified 201 response in this same run. No ID from collection, environment or data files is accepted. Successful child cleanup is required before deleting parents."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete Course",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"204\");",
+              "const requiredEntities = [\"course\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "const childEntities = [\"module\", \"content\"];",
+              "",
+              "if (childEntities.some(entity => run.created[entity])) {",
+              "  blockRequest(\"A current-run child record was not successfully deleted. Parent cleanup was not sent.\");",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 204) {",
+              "  const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "  delete run.created.course;",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"courseId\", \"\");",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/courses/{{courseId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "courses",
+            "{{courseId}}"
+          ]
+        },
+        "description": "Cleanup only: the pre-request guard requires an ID captured from a verified 201 response in this same run. No ID from collection, environment or data files is accepted. Successful child cleanup is required before deleting parents."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set(\"expectedStatus\", \"204\");",
+              "const requiredEntities = [\"user\"];",
+              "",
+              "function blockRequest(message) {",
+              "  pm.execution.skipRequest();",
+              "  throw new Error(message);",
+              "}",
+              "let run;",
+              "try { run = JSON.parse(pm.variables.get(\"cmsRunState\") || \"null\"); }",
+              "catch (_) { blockRequest(\"Invalid local run state. Run the entire collection from Create User.\"); }",
+              "if (!run || !run.created || run.iteration !== pm.info.iteration || run.baseUrl !== pm.variables.get(\"baseUrl\")) {",
+              "  blockRequest(\"Missing current-run ownership. Run the entire collection from Create User; no IDs are accepted from other scopes.\");",
+              "}",
+              "function validId(id) {",
+              "  return typeof id === \"string\" && /^[1-9]\\d{0,18}$/.test(id) && (id.length < 19 || id <= \"9223372036854775807\");",
+              "}",
+              "for (const entity of requiredEntities) {",
+              "  const owned = run.created[entity];",
+              "  if (!owned || owned.runId !== run.runId || !validId(owned.id)) {",
+              "    blockRequest(`No verified ${entity} was created in this run. The request was not sent.`);",
+              "  }",
+              "  pm.variables.set(`${entity}Id`, owned.id);",
+              "}",
+              "// Regenerate payload markers from the private local run state on every request.",
+              "pm.variables.set(\"runId\", run.runId);",
+              "pm.variables.set(\"runEmail\", `postman.${run.runId}@example.com`);",
+              "pm.variables.set(\"updatedEmail\", `postman.updated.${run.runId}@example.com`);",
+              "pm.variables.set(\"runCourseCode\", `POSTMAN-${run.runId}`);",
+              "",
+              "const childEntities = [\"course\", \"module\", \"content\"];",
+              "",
+              "if (childEntities.some(entity => run.created[entity])) {",
+              "  blockRequest(\"A current-run child record was not successfully deleted. Parent cleanup was not sent.\");",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 204) {",
+              "  const run = JSON.parse(pm.variables.get(\"cmsRunState\"));",
+              "  delete run.created.user;",
+              "  pm.variables.set(\"cmsRunState\", JSON.stringify(run));",
+              "  pm.variables.set(\"userId\", \"\");",
+              "}",
+              "if (pm.response.code === 204) pm.variables.unset(\"cmsRunState\");"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Cleanup only: the pre-request guard requires an ID captured from a verified 201 response in this same run. No ID from collection, environment or data files is accepted. Successful child cleanup is required before deleting parents."
+      },
+      "response": []
+    }
+  ]
+}

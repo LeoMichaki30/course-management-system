@@ -598,6 +598,38 @@ Duplicidades retornam `This user has already viewed this content.`. Referências
 
 Os endpoints atuais não possuem autenticação ou autorização de usuários.
 
+## Coleção Postman
+
+A coleção [Course Management System](docs/postman/course-management-system.postman_collection.json) está no formato **Postman Collection v2.1**. Contém **24 requisições**: as 23 operações dos CRUDs e visualizações, mais uma repetição proposital de visualização para verificar o conflito `409`.
+
+### Importar e executar
+
+1. Inicie o backend com `npm run dev` ou pelo Docker Compose, conforme as instruções anteriores.
+2. No Postman, selecione **Import** e abra `docs/postman/course-management-system.postman_collection.json`.
+3. Nas variáveis da coleção, confira `baseUrl`, cujo valor padrão é `http://localhost:3001`. A coleção permite apenas HTTP local (`localhost` ou `127.0.0.1`) com porta explícita. Não informe URL ou chave do Supabase.
+4. Use uma versão atual do Postman com suporte a `pm.execution.skipRequest()`. Abra **Run collection**, mantenha **todas as 24 requisições selecionadas na ordem salva**, sem arquivo de dados, e comece com uma iteração. Não configure execução paralela das requisições.
+5. Execute somente em um ambiente de desenvolvimento autorizado e confira os resultados em **Test Results**. O `409` de **Reject Duplicate Content View** é esperado e conta como sucesso.
+
+**Executar a coleção faz escritas reais no banco configurado pelo backend**, mesmo que `baseUrl` seja local. A análise e a validação automatizada da coleção não executam essas requisições contra o Supabase. Os testes de interface com a API em memória também não substituem esta verificação de integração.
+
+### Sequência e dados temporários
+
+A ordem é: criar/listar/buscar/editar usuário; repetir esses passos para curso, módulo e conteúdo; registrar visualização; tentar a duplicidade; consultar por usuário e conteúdo; excluir conteúdo, módulo, curso e usuário. Os vínculos apontam exclusivamente para os registros criados pela própria execução. A remoção da visualização fica a cargo da cascata do banco ao excluir o conteúdo.
+
+A primeira requisição gera um identificador aleatório da execução, e-mails e código de curso exclusivos. Os IDs são capturados automaticamente das respostas `201`, validados como strings BIGINT e usados em `{{userId}}`, `{{courseId}}`, `{{moduleId}}` e `{{contentId}}`. O primeiro `watched_at` é guardado para confirmar que a duplicidade não o altera.
+
+Os IDs e os marcadores de propriedade usam variáveis locais do Runner (`pm.variables`), que não persistem após o fim da execução, conforme a [documentação do Postman](https://learning.postman.com/docs/use/send-requests/variables/variables/). Não é necessário preencher IDs manualmente. O nome interno `cmsRunState` é reservado e não pode existir em variáveis de coleção, ambiente, globais ou arquivos de dados. Variáveis de ambiente ou arquivos de dados com os mesmos nomes não substituem os IDs registrados pelas guardas dos scripts.
+
+### Proteções e limitações da limpeza
+
+- Uma requisição dependente sem registro criado e confirmado nesta execução é bloqueada com `pm.execution.skipRequest()`. Isso também protege PUT e DELETE enviados isoladamente ou fora de ordem; use o Runner completo para o fluxo reproduzível.
+- A captura exige `201`, ID válido, campos correspondentes ao corpo exclusivo enviado e cabeçalho `Location` correto. A limpeza não usa IDs fixos, resultados de listagens ou buscas por e-mail para escolher registros.
+- Cada DELETE exige prova local de criação na mesma execução e mesma URL base. O DELETE de um pai é bloqueado se a exclusão de algum filho da execução não tiver retornado `204`.
+- Se a execução for interrompida, se houver timeout após uma inserção ou se uma resposta não puder ser confirmada, podem permanecer registros temporários. Não há limpeza ampla nem tentativa de adivinhar IDs. Investigue os registros pelo identificador exclusivo da execução e obtenha autorização antes de qualquer limpeza manual.
+- Os scripts verificam códigos HTTP, JSON, vínculos, valores atualizados, IDs como strings, conteúdo formatado, duplicidade, preservação do timestamp e ausência de corpo em respostas `204`. Requisições bloqueadas aparecem como ignoradas e devem ser investigadas, não consideradas uma execução integral bem-sucedida.
+
+Não use **Send** em **Create User** para iniciar um fluxo manual: variáveis locais não são mantidas entre envios independentes, e isso pode deixar um cadastro temporário sem limpeza automática. Para repetir o teste, execute novamente a coleção completa; cada iteração inicia um novo conjunto de dados.
+
 ## Verificação e testes
 
 ### Verificação de TypeScript
