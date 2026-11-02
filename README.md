@@ -33,6 +33,9 @@ course-management-system/
 ├── Dockerfile         # Backend compilado, execução com Node.js
 ├── .dockerignore
 ├── compose.yaml
+├── docs/
+│   ├── erd.md         # Diagrama entidade-relacionamento em Mermaid
+│   └── postman/       # Coleção Postman e testes do fluxo da API
 ├── frontend/          # React, Vite, Dockerfile e nginx.conf
 ├── src/
 │   ├── config/
@@ -104,6 +107,8 @@ course-management-system/
 ## Estrutura do banco de dados
 
 O esquema PostgreSQL está definido em [supabase/migrations/20261030000000_create_course_management_schema.sql](supabase/migrations/20261030000000_create_course_management_schema.sql).
+
+O [Diagrama Entidade-Relacionamento (DER)](docs/erd.md) apresenta as tabelas, seus campos, chaves e relacionamentos, além das ressalvas sobre os requisitos acadêmicos. Para visualizá-lo no GitHub, abra `docs/erd.md` no repositório e selecione a visualização renderizada (**Preview**, quando disponível). O GitHub renderiza o bloco `mermaid` como diagrama; a opção **Raw** mostra apenas seu código-fonte.
 
 | Tabela | Campos | Finalidade |
 | --- | --- | --- |
@@ -181,12 +186,16 @@ No PowerShell, o comando equivalente é `Copy-Item .env.example .env`.
 Preencha o arquivo com os dados do seu projeto Supabase. Os valores abaixo são apenas exemplos fictícios:
 
 ```dotenv
-SUPABASE_URL=https://seu-projeto.supabase.co
-SUPABASE_SECRET_KEY=sua_chave_secreta_do_servidor
+SUPABASE_URL=https://your-project.example.invalid
+SUPABASE_SECRET_KEY=replace-with-your-server-secret
 ```
 
 - `SUPABASE_URL`: URL do projeto Supabase, com protocolo HTTP ou HTTPS.
 - `SUPABASE_SECRET_KEY`: chave secreta destinada ao servidor. A configuração também aceita a chave legada `service_role` nessa variável.
+
+Substitua os dois valores fictícios antes de iniciar a API. O endereço `.invalid` não é um projeto Supabase acessível. Utilize as configurações do seu próprio projeto; não são necessárias as credenciais dos integrantes do grupo. Uma chave pública (`publishable` ou `anon`) não atende às permissões definidas para este backend.
+
+O modelo da raiz também inclui `VITE_API_URL=http://localhost:3001`, uma configuração pública e opcional do build do frontend no Docker Compose. O backend não utiliza essa variável. Para executar o Vite diretamente, configure-a em `frontend/.env`, se necessário, conforme a seção do frontend.
 
 Nunca publique o `.env`, faça commit de credenciais ou exponha a chave em código de frontend. O cliente em `src/config/supabase.ts` carrega essas variáveis e desabilita persistência e renovação de sessões. A API exige as duas variáveis ao iniciar, inclusive para acessar a rota `/`, pois as rotas de usuários importam esse cliente.
 
@@ -194,10 +203,14 @@ Nunca publique o `.env`, faça commit de credenciais ou exponha a chave em códi
 
 Para um projeto Supabase de desenvolvimento novo e vazio:
 
-1. Abra o SQL Editor no painel do Supabase.
-2. Execute uma única vez o conteúdo de `supabase/migrations/20261030000000_create_course_management_schema.sql`.
-3. Execute uma única vez o conteúdo de `supabase/seed.sql` para inserir os dados de exemplo.
-4. Execute as consultas de `sql/reports.sql` para conferir os resultados.
+1. Crie um projeto no painel do Supabase e aguarde sua inicialização. Use um projeto próprio, destinado à avaliação, com o schema `public` vazio.
+2. Nas configurações da **Data API**, confirme que ela está habilitada e que `public` está na lista **Exposed schemas**. Os repositories acessam as tabelas desse schema pela API REST do Supabase.
+3. Obtenha a URL do projeto e uma chave secreta de servidor nas configurações do projeto, em **API Keys** ou no diálogo **Connect**. Preencha `SUPABASE_URL` e `SUPABASE_SECRET_KEY` no `.env` da raiz com os dados desse mesmo projeto. A senha do banco não é utilizada pela aplicação.
+4. Abra o **SQL Editor** desse projeto novo e execute uma única vez o conteúdo de `supabase/migrations/20261030000000_create_course_management_schema.sql`.
+5. Execute uma única vez o conteúdo de `supabase/seed.sql` para inserir os dados de exemplo.
+6. Execute as consultas de `sql/reports.sql` para conferir os resultados.
+
+A migration já habilita RLS e concede as permissões de tabela e sequência ao `service_role`. Não é necessário criar políticas públicas, desabilitar RLS ou liberar acesso para `anon` e `authenticated`. Habilitar a Data API e expor o schema não substitui essas permissões. Consulte as referências oficiais de [segurança da Data API](https://supabase.com/docs/guides/api/securing-your-api) e [chaves de API](https://supabase.com/docs/guides/getting-started/api-keys).
 
 Se estiver continuando o projeto em outro computador e o banco remoto já estiver configurado, reutilize esse projeto e configure o `.env` local. Não reaplique a migration nem o seed.
 
@@ -310,6 +323,8 @@ A configuração inicia **somente backend e frontend**. O banco continua sendo o
 - Docker Engine ou Docker Desktop em execução, com Docker Compose v2 e suporte a containers Linux.
 - Portas locais `3001` e `4173` disponíveis. Encerre servidores locais que estejam usando essas portas antes de iniciar os containers.
 - `.env` na raiz com `SUPABASE_URL` e `SUPABASE_SECRET_KEY` do projeto remoto existente. Não substitua esse arquivo se ele já estiver configurado.
+
+Para uma instalação do zero, prepare primeiro um projeto Supabase próprio conforme a seção **Preparar o banco de desenvolvimento** e copie `.env.example` para `.env`, substituindo os valores fictícios. O Compose não cria nem popula o banco. Não é necessário instalar Node.js ou executar `npm ci` no computador para esse fluxo: as dependências são instaladas durante o build das imagens.
 
 O Compose lê as variáveis do `.env` da raiz e injeta somente as configurações necessárias no backend em tempo de execução. Variáveis exportadas no terminal têm precedência. A configuração falha com uma mensagem caso uma variável obrigatória esteja vazia. Não é necessário criar `frontend/.env` para usar Docker.
 
