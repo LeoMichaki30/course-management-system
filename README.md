@@ -707,4 +707,4 @@ Autenticação e implantação em hospedagem externa não estão implementadas. 
 
 - Leonardo Michaki — [GitHub](https://github.com/LeoMichaki30)
 - Matheus Grisard — [GitHub](https://github.com/MatheusGrisard)
-- Lohana Santos — [GitHub](https://github.com/lohsantxs)
+- Lohanna Santos — [GitHub](https://github.com/lohsantxs)
