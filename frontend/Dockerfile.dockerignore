@@ -1,0 +1,27 @@
+# Paths are relative to the repository root, not to frontend/.
+**
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/tsconfig.json
+!frontend/vite.config.ts
+!frontend/nginx.conf
+!frontend/src/
+!frontend/src/**
+!frontend/tests/
+!frontend/tests/**
+!src/
+!src/models/
+!src/models/**
+
+# No environment files, credentials or prebuilt artifacts enter any build stage.
+**/.env
+**/.env.*
+**/.npmrc
+**/*.pem
+**/*.key
+**/.git
+**/node_modules
+**/dist
+**/*.log
