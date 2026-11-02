@@ -1,6 +1,6 @@
 # Course Management System
 
-Sistema de gerenciamento de cursos on-line desenvolvido como projeto acadêmico, com backend em Node.js, TypeScript e Express e banco de dados PostgreSQL por meio do Supabase.
+Sistema de gerenciamento de cursos on-line desenvolvido como projeto acadêmico, com frontend em React, TypeScript e Vite, backend em Node.js, TypeScript e Express e banco de dados PostgreSQL por meio do Supabase.
 
 O projeto está em desenvolvimento. Atualmente, a API disponibiliza os CRUDs de usuários, cursos, módulos e conteúdos. Também permite registrar a primeira visualização de cada conteúdo por usuário e consultar visualizações por usuário ou conteúdo.
 
@@ -12,9 +12,12 @@ Construir uma API para organizar cursos e seus materiais, identificar os usuári
 
 | Tecnologia | Utilização |
 | --- | --- |
+| React, Vite, HTML e CSS | Interface administrativa em português, responsiva e conectada à API |
 | Node.js e npm | Execução do backend e gerenciamento de dependências |
 | TypeScript | Tipagem estática com verificação estrita (`strict`) |
 | Express 5 | Servidor HTTP, rotas e tratamento de requisições |
+| Swagger UI / OpenAPI 3.0.3 | Documentação navegável dos contratos da API |
+| Docker Compose / Nginx | Execução local dos dois serviços em containers e distribuição do frontend compilado |
 | PostgreSQL / Supabase | Banco de dados relacional e acesso aos dados |
 | `@supabase/supabase-js` | Cliente utilizado pelo backend para consultar o Supabase |
 | `dotenv` | Carregamento das variáveis do arquivo `.env` |
@@ -27,9 +30,15 @@ O backend utiliza uma arquitetura em camadas. As rotas encaminham as requisiçõ
 
 ```text
 course-management-system/
+├── Dockerfile         # Backend compilado, execução com Node.js
+├── .dockerignore
+├── compose.yaml
+├── frontend/          # React, Vite, Dockerfile e nginx.conf
 ├── src/
 │   ├── config/
 │   │   └── supabase.ts
+│   ├── docs/
+│   │   └── openapi.ts
 │   ├── controllers/
 │   │   ├── contentController.ts
 │   │   ├── courseController.ts
@@ -63,6 +72,7 @@ course-management-system/
 ├── sql/
 │   └── reports.sql
 ├── tests/
+│   ├── apiDocs.test.cjs
 │   ├── contentRoutes.test.cjs
 │   ├── courseRoutes.test.cjs
 │   ├── moduleRoutes.test.cjs
@@ -146,7 +156,7 @@ Com o seed, Alice possui dois cursos e Benjamin possui um; os demais usuários p
 
 ### Pré-requisitos
 
-- Node.js 22 ou superior e npm.
+- Node.js 22.12 ou superior (ou Node.js 24) e npm para executar também o frontend Vite.
 - Git.
 - Um projeto Supabase de desenvolvimento com o esquema configurado conforme as instruções abaixo.
 
@@ -221,6 +231,169 @@ Acesse `GET http://localhost:3001/` para conferir a resposta inicial:
 ```
 
 Essa rota verifica a disponibilidade do Express; ela não consulta o banco de dados.
+
+## Frontend React
+
+A interface em `frontend/` é independente do backend. Inclui dashboard com contagens e estrutura dos cursos, CRUD de usuários, cursos, módulos e conteúdos, seleção dos vínculos e registro/consulta de visualizações. A navegação usa URLs com hash, como `/#/courses`, sem exigir configuração de rotas no servidor de arquivos estáticos.
+
+Os formulários usam os métodos POST/PUT existentes, mantêm IDs BIGINT como strings, preservam o texto original dos conteúdos e traduzem erros para português. As listas incluem busca e paginação local. A exclusão exige confirmação e informa os conflitos de vínculos ou a remoção em cascata das visualizações. Há estados de carregamento, falha, lista vazia e sucesso. O menu lateral se adapta às telas pequenas e as tabelas têm rolagem horizontal própria.
+
+### Executar com a API real
+
+Na raiz, com o `.env` do backend já configurado:
+
+```sh
+npm ci
+npm run dev
+```
+
+Em outro terminal, também a partir da raiz:
+
+```sh
+npm --prefix frontend ci
+cp frontend/.env.example frontend/.env
+npm --prefix frontend run dev
+```
+
+No PowerShell, use `Copy-Item frontend/.env.example frontend/.env` para a cópia. O frontend abre em **http://localhost:5173** e consome **http://localhost:3001** por padrão. As portas são fixas: se estiverem ocupadas, encerre o processo correspondente ou escolha uma configuração compatível antes de iniciar.
+
+O arquivo `frontend/.env` é opcional e aceita somente a URL pública da API:
+
+```dotenv
+VITE_API_URL=http://localhost:3001
+```
+
+Reinicie o Vite após alterar essa configuração. No build, a URL é incorporada ao código gerado. Não copie o `.env` da raiz para o frontend: **nenhuma chave do Supabase deve usar o prefixo `VITE_` ou ser colocada no código do navegador**. A interface acessa apenas o Express. As variáveis com prefixo `VITE_` são públicas, conforme a [documentação do Vite](https://vite.dev/guide/env-and-mode).
+
+Ao usar o backend real, salvar ou excluir pela interface altera o banco configurado nele. Os testes descritos abaixo utilizam somente dados simulados.
+
+O middleware `src/middleware/localCors.ts` permite somente as origens locais `http://localhost:5173`, `http://127.0.0.1:5173`, `http://localhost:4173` e `http://127.0.0.1:4173`. Não usa origem curinga nem credenciais de sessão. As portas 5173 e 4173 correspondem ao desenvolvimento e ao preview local. CORS não substitui autenticação; esta permanece fora do escopo implementado.
+
+### Build, typecheck e testes do frontend
+
+```sh
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+npm --prefix frontend test
+npm --prefix frontend run preview
+```
+
+O build é gerado em `frontend/dist/` e o preview abre em **http://localhost:4173**. O servidor de preview serve o build; o backend precisa continuar em execução. Os arquivos gerados e `node_modules` estão ignorados pelo Git.
+
+Os testes do frontend verificam payloads, tradução de erros, resposta `204`, ausência de repetição automática de escritas e preservação dos IDs e do material formatado. Eles não fazem requisições reais. A implementação usa apenas React/React DOM em execução, sem bibliotecas adicionais de componentes ou roteamento; Vite, TypeScript e suas ferramentas são dependências de desenvolvimento.
+
+### Revisar a interface sem Supabase
+
+Há uma API descartável em memória em `frontend/tests/mock-api.ts`. Ela não importa o Supabase, não usa credenciais e não grava arquivos. Para usá-la, instale as dependências do frontend e execute em um terminal:
+
+```sh
+cd frontend
+node --import tsx tests/mock-api.ts
+```
+
+Em outro terminal, na raiz do projeto:
+
+```sh
+VITE_API_URL=http://127.0.0.1:3009 npm --prefix frontend run dev
+```
+
+No PowerShell, defina primeiro `$env:VITE_API_URL="http://127.0.0.1:3009"` e execute `npm --prefix frontend run dev`. Abra http://localhost:5173. Os cadastros e exclusões ficam apenas na memória do processo da API de teste. Encerre ambos com `Ctrl+C`; os dados fictícios são descartados. Remova a variável do terminal antes de retornar à API real (`Remove-Item Env:VITE_API_URL` no PowerShell).
+
+A API de teste permite revisar a interface, mas não reproduz todas as constraints ou cascatas do PostgreSQL e não substitui os testes do backend nem a integração real autorizada.
+
+## Executar com Docker Compose
+
+A configuração inicia **somente backend e frontend**. O banco continua sendo o projeto remoto do Supabase já configurado. Não há serviço PostgreSQL local, execução de migrations, seed ou reset na inicialização.
+
+### Pré-requisitos
+
+- Docker Engine ou Docker Desktop em execução, com Docker Compose v2 e suporte a containers Linux.
+- Portas locais `3001` e `4173` disponíveis. Encerre servidores locais que estejam usando essas portas antes de iniciar os containers.
+- `.env` na raiz com `SUPABASE_URL` e `SUPABASE_SECRET_KEY` do projeto remoto existente. Não substitua esse arquivo se ele já estiver configurado.
+
+O Compose lê as variáveis do `.env` da raiz e injeta somente as configurações necessárias no backend em tempo de execução. Variáveis exportadas no terminal têm precedência. A configuração falha com uma mensagem caso uma variável obrigatória esteja vazia. Não é necessário criar `frontend/.env` para usar Docker.
+
+### Iniciar, acompanhar e parar
+
+Na raiz do projeto:
+
+```sh
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+```
+
+A primeira execução baixa as imagens base e instala as dependências. Acesse:
+
+| Serviço | Endereço |
+| --- | --- |
+| Frontend | http://localhost:4173 |
+| Backend | http://localhost:3001 |
+| Swagger UI | http://localhost:3001/api-docs |
+| OpenAPI JSON | http://localhost:3001/api-docs.json |
+
+Para acompanhar os logs e encerrar os serviços:
+
+```sh
+docker compose logs -f backend frontend
+docker compose down
+```
+
+Use `Ctrl+C` para sair dos logs. `docker compose down` remove os containers e a rede local; não apaga dados do Supabase remoto. As imagens permanecem disponíveis para uma próxima inicialização. Alterações no código exigem reconstrução com `docker compose up --build -d`; esse fluxo serve versões compiladas, sem recarregamento automático.
+
+### Comunicação entre frontend e backend
+
+O frontend é compilado pelo Vite e servido pelo Nginx na porta `4173` do computador. A URL pública padrão da API é **http://localhost:3001**, incorporada ao build por `VITE_API_URL`. O navegador acessa essa porta publicada do backend; ele não resolve o nome interno `backend` da rede Docker. Não configure `http://backend:3001` como URL do navegador.
+
+O CORS existente já permite `http://localhost:4173` e `http://127.0.0.1:4173`, portanto não foi ampliado. As portas são publicadas apenas em `127.0.0.1`, para uso local. Não é necessário um proxy ou mudança nos endpoints. O Swagger continua sendo servido diretamente pelo Express na porta `3001` e usa a própria origem para acessar `/api-docs.json` e a API.
+
+Se precisar mudar a URL pública, defina `VITE_API_URL` no ambiente do Compose e reconstrua o frontend. Essa configuração é pública e de build, não uma variável dinâmica do Nginx. A origem do frontend e as regras de CORS precisam continuar compatíveis. Para o fluxo local padrão, nenhuma alteração é necessária.
+
+### Imagens e credenciais
+
+- O `Dockerfile` da raiz compila TypeScript em uma etapa e instala apenas dependências de produção na imagem final. O processo usa o usuário `node` e executa `node dist/server.js`, sem `tsx` ou modo watch.
+- `frontend/Dockerfile` usa o contexto da raiz para acessar os tipos compartilhados de `src/models`. A imagem final contém apenas Nginx, sua configuração e os arquivos estáticos compilados.
+- `.dockerignore` e `frontend/Dockerfile.dockerignore` restringem os contextos a arquivos explicitamente permitidos. Excluem `.env`, variantes, `.npmrc`, chaves, certificados, Git, dependências locais e builds anteriores. O arquivo específico do Dockerfile do frontend tem precedência sobre o `.dockerignore` da raiz, conforme a [referência do Docker](https://docs.docker.com/build/building/context/#dockerignore-files).
+- Não há credenciais em `ARG`, `ENV` dos Dockerfiles, código do frontend ou arquivos copiados para as imagens. A chave do Supabase existe apenas na configuração local e no ambiente do backend em execução. Nunca a use como `VITE_API_URL` ou outra variável `VITE_`.
+- O comando `docker compose config --quiet` valida a configuração sem imprimi-la. Evite compartilhar a saída completa de `docker compose config` ou de inspeções dos containers, pois elas podem incluir o ambiente de execução.
+
+O frontend aguarda o healthcheck do backend. Esse healthcheck acessa apenas `GET /`, que não consulta o Supabase; ele confirma a disponibilidade HTTP, não a conectividade ou integridade do banco remoto. O healthcheck do frontend verifica a página estática.
+
+### Verificação dos containers sem escrita no banco
+
+Depois de iniciá-los:
+
+```sh
+curl -f http://localhost:4173/
+curl -f http://localhost:3001/
+curl -f http://localhost:3001/api-docs/
+curl -f http://localhost:3001/api-docs.json
+curl -i -X OPTIONS http://localhost:3001/users -H "Origin: http://localhost:4173" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type"
+```
+
+Essas verificações não escrevem nem consultam tabelas no Supabase. O último comando verifica o preflight CORS da origem do frontend. Salvar/excluir registros na interface ou executar operações pelo Swagger envia requisições reais ao banco remoto e deve ser feito somente quando autorizado.
+
+## Documentação da API — Swagger/OpenAPI
+
+A documentação usa Swagger UI e a especificação OpenAPI 3.0.3, definida em `src/docs/openapi.ts`. Ela descreve a rota inicial, os CRUDs de usuários, cursos, módulos e conteúdos e os três endpoints de visualizações, com parâmetros, schemas, exemplos de requisições/respostas e códigos HTTP conforme cada operação. Os nomes técnicos e as descrições da especificação estão em inglês.
+
+Depois de instalar as dependências e configurar o `.env` do backend, execute na raiz:
+
+```sh
+npm ci
+npm run dev
+```
+
+Acesse:
+
+- **Swagger UI:** [http://localhost:3001/api-docs](http://localhost:3001/api-docs).
+- **Especificação JSON:** [http://localhost:3001/api-docs.json](http://localhost:3001/api-docs.json).
+
+O Express serve a interface e seus arquivos localmente, usando `swagger-ui-express`; os tipos TypeScript ficam nas dependências de desenvolvimento. O validador remoto do Swagger UI está desabilitado. O servidor selecionado na documentação é a própria origem do Express, sem credenciais embutidas.
+
+**O botão “Try it out” envia requisições reais.** Executar POST, PUT ou DELETE pela documentação pode alterar o banco configurado no backend. Os exemplos são ilustrativos: seus registros referenciados precisam existir para operações reais. Nenhum exemplo é inserido automaticamente. Os testes de documentação somente acessam a interface, os arquivos estáticos, a especificação e a rota inicial, sem consultar ou escrever no Supabase.
+
+A documentação mantém IDs BIGINT como strings, distingue campos opcionais no POST dos obrigatórios no PUT, informa a preservação do material formatado e descreve os bloqueios de exclusão e as cascatas. Não adiciona autenticação, validação de requisições por OpenAPI ou novos comportamentos aos endpoints. Alterações futuras nos contratos precisam ser refletidas em `src/docs/openapi.ts`.
 
 ## Endpoints implementados
 
@@ -438,10 +611,12 @@ Verifica os tipos da aplicação e dos scripts sem gerar arquivos compilados.
 ### Testes automatizados das rotas
 
 ```sh
-node --import tsx --test tests/userRoutes.test.cjs tests/courseRoutes.test.cjs tests/moduleRoutes.test.cjs tests/contentRoutes.test.cjs tests/userContentViewRoutes.test.cjs
+node --import tsx --test tests/*.test.cjs
 ```
 
 Os testes usam credenciais fictícias e interceptam as chamadas ao Supabase, sem acessar o banco real. Cobrem a rota inicial, os CRUDs de usuários, cursos, módulos e conteúdos, validações, registros inexistentes, listagem em múltiplas páginas, IDs grandes, conflitos, JSON inválido, corpo excessivamente grande e falhas de banco ou rede. Os testes de cursos também verificam o `user_id` como string, a descrição opcional ou nula, a ausência de limites arbitrários para código e título e a distinção do erro `23503` entre escrita e exclusão. Os testes de módulos cobrem separadamente referências a cursos e usuários inexistentes em POST e PUT, além da exclusão bloqueada por conteúdos no DELETE. Também verificam os três IDs BIGINT, os campos obrigatórios, a descrição e a aceitação de títulos repetidos. Os testes de conteúdos verificam a preservação exata do texto formatado em POST e PUT, as referências a módulos inexistentes em cada operação e a exclusão sem manipulação manual de visualizações. O conjunto de visualizações verifica registro com timestamp explícito ou gerado pelo banco, duplicidade sem atualização, conflitos de referências, consultas por usuário e conteúdo, ausência de registros, paginação, IDs grandes e timestamps inválidos. Esses testes simulam as respostas e não validam as constraints em um banco real; testes de escrita no Supabase dependem de autorização específica. A remoção efetiva das visualizações por cascata também depende de verificação real autorizada; o teste simulado confirma apenas que a API delega a exclusão ao banco.
+
+O arquivo `tests/apiDocs.test.cjs` também verifica que a documentação corresponde às rotas existentes, que as referências locais dos schemas são resolvidas e que a interface e seus arquivos são servidos sem chamadas ao banco. O teste de CORS continua verificando as origens locais permitidas.
 
 Não existe um script `npm test` definido no `package.json`; utilize o comando acima.
 
@@ -459,7 +634,10 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 
 ### Implementadas no repositório
 
+- [x] Frontend React com TypeScript, Vite e CSS responsivo, com dashboard, CRUDs e visualizações.
 - [x] Backend Express com TypeScript em camadas.
+- [x] Dockerfiles e Compose para backend e frontend, usando Supabase remoto.
+- [x] Documentação Swagger UI em `/api-docs` e especificação OpenAPI em `/api-docs.json`.
 - [x] Cliente Supabase configurado por variáveis de ambiente.
 - [x] CRUD de usuários com validações e tratamento de erros.
 - [x] CRUD de cursos com validações, identificação do criador e tratamento de conflitos.
@@ -476,9 +654,10 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 
 - [ ] Testes reais de integração de escrita e de integridade no Supabase, mediante autorização.
 
-Autenticação, interface web, Swagger, Docker e implantação não estão implementados. A prioridade do projeto é concluir os requisitos funcionais do backend. A existência das tabelas, do seed e dos relatórios SQL não significa que as respectivas APIs estejam disponíveis ou que esses scripts já tenham sido executados em cada ambiente.
+Autenticação e implantação em hospedagem externa não estão implementadas. A prioridade do projeto é concluir os requisitos funcionais do backend. A existência das tabelas, do seed e dos relatórios SQL não significa que as respectivas APIs estejam disponíveis ou que esses scripts já tenham sido executados em cada ambiente.
 
 ## Integrantes
 
-- Leonardo Michaki
-- Matheus Grisard
+- Leonardo Michaki — [GitHub](https://github.com/LeoMichaki30)
+- Matheus Grisard — [GitHub](https://github.com/MatheusGrisard)
+- Lohana Santos — [GitHub](https://github.com/lohsantxs)

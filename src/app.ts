@@ -1,4 +1,7 @@
 import express from "express";
+import swaggerUi from "swagger-ui-express";
+import { openApiDocument } from "./docs/openapi";
+import { localCors } from "./middleware/localCors";
 import type { ErrorRequestHandler } from "express";
 import userRoutes from "./routes/userRoutes";
 import courseRoutes from "./routes/courseRoutes";
@@ -8,6 +11,7 @@ import userContentViewRoutes from "./routes/userContentViewRoutes";
 
 const app = express();
 
+app.use(localCors);
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -16,6 +20,15 @@ app.get("/", (req, res) => {
     version: "1.0.0"
   });
 });
+
+app.get("/api-docs.json", (req, res) => {
+  res.json(openApiDocument);
+});
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(undefined, {
+  customSiteTitle: "Course Management System API Docs",
+  swaggerOptions: { url: "/api-docs.json", validatorUrl: null }
+}));
 
 app.use("/users", userRoutes);
 app.use("/courses", courseRoutes);
