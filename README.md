@@ -696,12 +696,7 @@ Esse comando realiza uma consulta real, somente de leitura, e exibe a contagem d
 - [x] Script de população com dados de exemplo.
 - [x] Cinco relatórios SQL do projeto acadêmico.
 - [x] Registro e consulta de visualizações por usuário ou conteúdo, com rejeição de duplicidades e testes simulados.
-
-### Pendentes
-
-- [ ] Testes reais de integração de escrita e de integridade no Supabase, mediante autorização.
-
-Autenticação e implantação em hospedagem externa não estão implementadas. A prioridade do projeto é concluir os requisitos funcionais do backend. A existência das tabelas, do seed e dos relatórios SQL não significa que as respectivas APIs estejam disponíveis ou que esses scripts já tenham sido executados em cada ambiente.
+- [x] Testes reais de integração de escrita e de integridade no Supabase, mediante autorização.
 
 ## Integrantes
 
